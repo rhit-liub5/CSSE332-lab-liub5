@@ -33,7 +33,7 @@ OBJS = \
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
-#TOOLPREFIX = 
+#TOOLPREFIX =
 
 # Try to infer the correct TOOLPREFIX if not set
 ifndef TOOLPREFIX
@@ -75,7 +75,7 @@ endif
 LDFLAGS = -z max-page-size=4096
 
 $K/kernel: $(OBJS) $K/kernel.ld $U/initcode
-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
+	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS)
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
 
@@ -88,7 +88,7 @@ $U/initcode: $U/initcode.S
 tags: $(OBJS) _init
 	etags *.S *.c
 
-ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o
+ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/rhtest.o
 
 _%: %.o $(ULIB)
 	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $^
@@ -134,13 +134,17 @@ UPROGS=\
 	$U/_wc\
 	$U/_debug\
 	$U/_zombie\
+	$U/_sleep\
+	$U/_warmup\
+	$U/_arraylist\
+	$U/_find\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
 
 -include kernel/*.d user/*.d
 
-clean: 
+clean:
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 	*/*.o */*.d */*.asm */*.sym \
 	$U/initcode $U/initcode.out $K/kernel fs.img \
@@ -173,11 +177,9 @@ qemu-gdb: $K/kernel .gdbinit fs.img
 	@echo "*** Now run 'gdb' in another window." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 
-
 ##
 ## FOR testing lab grading script
 ##
-
 
 ifneq ($(V),@)
 GRADEFLAGS += -v
@@ -192,4 +194,15 @@ grade:
           (echo "'make clean' failed.  HINT: Do you have another running instance of xv6?" && exit 1)
 	./grade-lab-$(LAB).py $(GRADEFLAGS)
 
+##
+## FOR submission purposes
+## DEPRECATED: PLEASE USE ./create_submission.sh SCRIPT
+##
+
+# submit:
+# 	@echo $(MAKE) clean
+# 	@$(MAKE) clean || \
+# 	 (echo "'make clean' failed. HINT: Do you have another running instance of xv6?" && exit 1)
+# 	@git diff > submit-lab-$(LAB).patch
+# 	@tar --exclude={"*.out.*","*.out","__pycache__/",".git/"} -cvf submit-lab-$(LAB).tar ./*
 

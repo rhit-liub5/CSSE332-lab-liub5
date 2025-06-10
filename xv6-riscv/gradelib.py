@@ -89,7 +89,7 @@ def end_part(name):
     def show_part():
         global PART_TOTAL, PART_POSSIBLE
         print("Part %s score: %d/%d" % \
-            (name, TOTAL - PART_TOTAL, POSSIBLE - PART_POSSIBLE))
+              (name, TOTAL - PART_TOTAL, POSSIBLE - PART_POSSIBLE))
         print()
         PART_TOTAL, PART_POSSIBLE = TOTAL, POSSIBLE
     show_part.title = ""

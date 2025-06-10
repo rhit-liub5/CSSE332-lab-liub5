@@ -17,3 +17,5 @@ user/usys.S
 .gdbinit
 .vscode/
 xv6.*
+*.out
+*.out.*
