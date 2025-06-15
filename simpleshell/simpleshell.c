@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <ctype.h>
-
+#include <signal.h> 
 void setsighandler(int signum, void (*handler)(int)) {
   struct sigaction act;
 
