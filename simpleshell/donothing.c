@@ -10,6 +10,6 @@ int main(int argc, char** argv) {
     }
     printf("Pausing for 5 seconds...\n");
     sleep(5);
-    printf("Do nothing program %d finished!\n", getpid());
+    printf("Do nothing program finished!\n");
     return 0;
 }

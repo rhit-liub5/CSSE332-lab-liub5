@@ -32,7 +32,7 @@ void handle_sigchld(int ignored)
 
 void help(char *cmd, char *arg) {
     
-    if (isdigit((unsigned char)*cmd)){
+  if (isdigit((unsigned char)*cmd)){
 	int repeat = *cmd - '0';
 	char *newcmd = cmd+1;
 	int rcs[9];
@@ -40,21 +40,26 @@ void help(char *cmd, char *arg) {
 	for (int i = 0; i<repeat; i++){
 	   int rc = fork();
 	   if (rc == 0){
-		if (arg == NULL){
-		    execlp(newcmd, newcmd, NULL);
-		    exit(1);
-		}else {
-		    execlp(newcmd, newcmd, arg, NULL);
-		    exit(1);
-		}
+      if (arg == NULL){
+          execlp(newcmd, newcmd, NULL);
+          exit(1);
+      }else {
+          execlp(newcmd, newcmd, arg, NULL);
+          exit(1);
+      }
 	   }
 	   rcs[i] = rc;
 	}
 	for (int k = 0; k < repeat; k++) {
 	 int status;
 	 waitpid(rcs[k], &status, 0);
+  }
+  for (int k = 0; k < repeat; k++) {
+   printf("Do nothing program %d finished!\n", rcs[k]);
+  }
+  for (int k = 0; k < repeat; k++) {
 	 printf("Command %s for child %d done..\n", newcmd, rcs[k]);
-     }
+  }
 
      printf("All commands finished...\n");
 	
