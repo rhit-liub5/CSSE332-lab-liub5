@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <string.h>
 
 #define simple_assert(message, test)                                           \
   do {                                                                         \
@@ -57,7 +60,76 @@ void setup(void) {
 /**
  * Run all the test in the test suite.
  */
+// void timeout_handler(int sig) {
+//     printf("Test Time Out\n");
+//     exit(2);
+// }
+
 void run_all_tests() { /* TODO: Add your code here. */
+  setup();
+  int rcs[num_tests];
+  int pipes[num_tests][2];
+
+  for (int i = 0; i < num_tests; i++) {
+    if (pipe(pipes[i]) < 0) {
+        perror("pipe");
+        exit(1);
+      }
+    }
+
+
+  for (int i=0; i < num_tests; i++) {
+    int rc = fork();
+    if(rc < 0) {
+      printf("fork failed\n");
+      exit(1);
+    } else if(rc == 0) {
+      /* child process */
+        // signal(SIGALRM, timeout_handler); this is my other way to do that I make a handler above
+        alarm(3);
+        close(pipes[i][0]);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "test %d always fails", i+1);
+        const char *msg = buf;        
+        write(pipes[i][1], msg, strlen(msg));
+        close(pipes[i][1]);
+        char *tresult = test_funcs[i]();
+        if(tresult == TEST_PASSED){
+          exit(0);
+        } else {
+          exit(1);
+        }
+
+    }
+    rcs[i] = rc;
+    close(pipes[i][1]);
+  }
+
+  for (int k=0; k < num_tests; k++) {
+      /* parent process */
+      int status;
+      waitpid(rcs[k],&status,0);
+      char buf[128];
+      if (WIFEXITED(status)) {
+          int code = WEXITSTATUS(status);
+          read(pipes[k][0], buf, sizeof(buf)-1);
+          if (code == 0) {
+              printf("Test Passed \n");
+          } else {
+              printf("Test Failed: %s\n",buf);
+          }
+      } else {
+      if (WIFSIGNALED(status)) {
+          int signal = WTERMSIG(status);
+          if (signal == SIGALRM) {
+              printf("Test Timed Out\n");
+          } else {
+              printf("Test Crashed\n");
+          }
+      }
+    }
+    close(pipes[k][0]); 
+  }
 }
 
 char *test1() {
@@ -145,7 +217,7 @@ int main(int argc, char **argv) {
   add_test(test1);
   add_test(test2);
   add_test(test3);
-  /* add_test(test4); */
-  /* add_test(test5); */
+  add_test(test4);
+  add_test(test5);
   run_all_tests();
 }
