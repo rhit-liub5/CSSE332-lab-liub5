@@ -9,8 +9,9 @@ int foo(int *p) {
 
 int main(int argc, char **argv) {
   int *p = malloc(sizeof(int));
-
+  // int *p = (int*)0xdeadbeef;
+  *p = 3;
   foo(p);
-
+  free(p);
   exit(EXIT_SUCCESS);
 }

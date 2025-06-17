@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 int main(int argc, char **argv) {
-  unsigned int i;
+  int i;
   int *p = malloc(10 * sizeof(int));
 
   // fill array
