@@ -70,10 +70,12 @@ struct student *alloc_student(const char *name) {
   struct student *st;
 
   st = malloc(sizeof(struct student));
+
   if(!st) {
     perror("PANIC: malloc failed, out of memory!");
     exit(EXIT_FAILURE);
   }
+  st->grades = malloc(NUM_EXAMS * sizeof(int));
 
   // copy the name
   st->name = malloc(strlen(name) + 1); // ENG POINT: why strlen(name) + 1?
@@ -135,6 +137,12 @@ int main(int argc, char **argv) {
       del_node(&head, &students[3]->node);
       del_node(&head, &students[4]->node);
 
+      for (int k = 0; k < NUM_STUDENTS; k++) {
+        free(students[k]->name);
+        free(students[k]->grades);
+        free(students[k]);
+      }
+      
       break;
     case 1:
       if(!test1()) exit(EXIT_FAILURE);
@@ -210,6 +218,9 @@ int test1(void) {
   }
 
   printf("OK.\n");
+  free(st->name);
+  free(st->grades);
+  free(st);
   return 1;
 }
 
@@ -238,6 +249,9 @@ int test2(void) {
   }
 
   printf("OK.\n");
+  free(st->name);
+  free(st->grades);
+  free(st);
   return 1;
 }
 
@@ -274,6 +288,12 @@ int test3(void) {
   }
 
   printf("OK.\n");
+  free(first->name);
+  free(first->grades);
+  free(first);
+  free(second->name);
+  free(second->grades);
+  free(second);
   return 1;
 }
 

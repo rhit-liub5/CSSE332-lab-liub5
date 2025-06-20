@@ -1,0 +1,5 @@
++source ~/.gef/gef.py
+
+warning: ~/.gef/gef.py: No such file or directory
+Reading symbols from demo.bin...
++quit
