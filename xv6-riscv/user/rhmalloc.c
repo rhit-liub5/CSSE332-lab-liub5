@@ -22,6 +22,8 @@
 #include "kernel/types.h"
 #include "user/user.h"
 #include "user/rhmalloc.h"
+#include <stddef.h>
+
 
 /**
  * For testing purposes, we need to record where our memory starts. Generally
@@ -73,7 +75,11 @@ uint8 rhmalloc_init(void)
   }
 
   /* TODO: Add code here to initialize freelist and its content. */
-  
+  freelist = (metadata_t*) heap_mem_start;
+  freelist->size   = MAX_HEAP_SIZE - sizeof(metadata_t);
+  freelist->in_use = 0;
+  freelist->next   = NULL;
+  freelist->prev   = NULL;
 
   return 0;
 }
@@ -99,15 +105,50 @@ void rhfree_all(void)
  * 
  * @return A valid void ptr if there is enough room, 0 on error. 
  */
+
+
 void *rhmalloc(uint32 size)
 {
   /* Check if we need to call rhmalloc_init and call it if needed. */
+  metadata_t *block;
+  uint32      Rsize;
   if(!freelist)
     if(rhmalloc_init()) return 0;
 
   /* TODO: Add you malloc code here. */
+  Rsize = ALIGN(size);
+  block = freelist;
+  while (block != NULL) {
+    if (block->in_use == 0 && block->size >= Rsize) {
+        break;
+    }
+    block = block->next;
+  }
 
-  return 0;
+  if (block == NULL) {
+    return 0;
+  }
+
+  if (block->size >= Rsize + sizeof(metadata_t) + ALIGNMENT) {
+    metadata_t *newblk = (metadata_t*)((char*)block
+                           + sizeof(metadata_t)
+                           + Rsize);
+    newblk->size = block->size - Rsize - sizeof(metadata_t);
+    newblk->next = block->next;
+    newblk->prev = block;
+    newblk->in_use = 0;
+
+    if (block->next){
+      block->next->prev = newblk;
+    }
+    block->next = newblk;
+    block->size = Rsize;
+
+  }
+  
+  block->in_use = 1;
+
+  return (void*)((char*)block + sizeof(metadata_t));
 }
 
 /**
@@ -122,4 +163,26 @@ void *rhmalloc(uint32 size)
 void rhfree(void *ptr)
 {
   /* TODO: Add your free code here. */
+    metadata_t *block;
+    metadata_t *next;
+    metadata_t *prev;
+    block = (metadata_t *)((char *)ptr - sizeof(metadata_t));
+    block->in_use = 0;
+    next = block->next;
+
+    if (next && !next->in_use) {
+        block->size += sizeof(metadata_t) + next->size;
+        block->next = next->next;
+        if (next->next){
+            next->next->prev = block;
+        }
+    }
+    prev = block->prev;
+    if (prev && !prev->in_use) {
+        prev->size += sizeof(metadata_t) + block->size;
+        prev->next = block->next;
+        if (block->next){
+            block->next->prev = prev;
+        }
+    } 
 }
