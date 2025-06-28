@@ -33,11 +33,6 @@ int main(int argc, char** argv) {
   char* result = printbuffalo(readbuffer);
   
   memset(readbuffer, 0, 1000);
-  b = read(readpipe[0], readbuffer, 1000);
-  if(b == -1){
-    perror("Error reading message to print from pipe");
-    exit(1);
-  }
 
   asserthandshake(readbuffer, readpipe);
 
