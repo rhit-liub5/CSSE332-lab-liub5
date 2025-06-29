@@ -54,7 +54,7 @@ main(int argc, char **argv)
     if (rc == 0) {
 
     int cl = child_fn(EXAM_USER);
-    if(child_fn == NULL) {
+    if(cl == NULL) {
       printf("we have problem on child_fun\n");
       exit(1);
     }
