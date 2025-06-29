@@ -54,10 +54,10 @@ main(int argc, char **argv)
     if (rc == 0) {
 
     int cl = child_fn(EXAM_USER);
-    if(cl == NULL) {
-      printf("we have problem on child_fun\n");
-      exit(1);
-    }
+    // if(cl == NULL) {
+    //   printf("we have problem on child_fun\n");
+    //   exit(1);
+    // }
     exit(cl);
   }
   // 父进程逻辑
