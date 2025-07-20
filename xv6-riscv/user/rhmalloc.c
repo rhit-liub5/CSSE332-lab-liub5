@@ -22,6 +22,8 @@
 #include "kernel/types.h"
 #include "user/user.h"
 #include "user/rhmalloc.h"
+#include <stddef.h>
+static metadata_t *free_lists[22];
 
 /**
  * Record the original start of our memory area in case we needed to allocate
@@ -95,7 +97,16 @@ uint8 rhmalloc_init(void)
 
   // TODO: Add your initialization code here, but do not change anything above
   // this line.
+  for(int k = 0; k <= 22; k++){
+    free_lists[k] = NULL;
+  }
 
+  metadata_t *b = (metadata_t*)heap_mem_start;
+  b->size   = 1 << 22; 
+  b->in_use = 0;
+  b->next   = b->prev = NULL;
+
+  free_lists[22] = b;
   return 0;
 }
 
@@ -136,8 +147,11 @@ void rhfree_all(void)
 */
 void *get_buddy(void *ptr, int exponent)
 {
-  // TODO: Add your code here.
-  return (void*)0;
+  // DONE: Add your code here.
+    uint64 addr = (uint64)ptr;
+    uint64 mask = 1ULL << exponent;
+    uint64 buddy_addr = addr ^ mask;  
+  return (void*)buddy_addr;
 }
 
 /**
@@ -145,6 +159,14 @@ void *get_buddy(void *ptr, int exponent)
  * 
  * @return A valid void ptr if there is enough room, 0 on error. 
  */
+int findexp(uint32 size){
+  int exp = 5;
+  while(size+8 > (1u << exp)) {
+    exp++;
+  }
+  return exp;
+}
+
 void *rhmalloc(uint32 size)
 {
   /* Check if we need to call rhmalloc_init and call it if needed. */
@@ -152,8 +174,45 @@ void *rhmalloc(uint32 size)
     if(rhmalloc_init()) return 0;
 
   // TODO: Add your malloc code here.
+  // 查找我们需要的大小的指数
+  int exp = findexp(size);
+  if (exp > 22){
+    
+    return (void*)0;
+  }
 
-  return (void*)0;
+  // 我们查找最近的有空闲位置
+  int free = exp;
+  while (free <= 22 && free_lists[free] == NULL){
+    free++;
+  }
+  if (free > 22){
+    return (void*)0;
+  }
+
+  // 拿出空闲链表进行重新分配
+  metadata_t *a = free_lists[free];
+  free_lists[free] = a->next;
+  if (a->next){
+    a->next->prev = NULL;
+  }
+
+  // 拆分盒子
+  for(int k = free; k > exp; k--){
+    metadata_t *buddy = (metadata_t*)((char*)a + (1 << (k-1)));
+    buddy->size = 1 << (k-1);
+    buddy->in_use = 0;
+    buddy->next = free_lists[k-1];
+    if (free_lists[k-1] != NULL) {
+      free_lists[k-1]->prev = buddy;
+    }
+    buddy->prev = NULL;
+    free_lists[k-1] = buddy;
+    a->size = 1 << (k-1);
+  }
+  a->in_use = 1;
+
+  return (void*)((char*)a + 8);
 }
 
 /**
@@ -168,4 +227,42 @@ void *rhmalloc(uint32 size)
 void rhfree(void *ptr)
 {
   // TODO: Add your free code here.
+  metadata_t *hdr = (metadata_t*)((char*)ptr - 8);
+
+  hdr->in_use = 0;
+  hdr->next = NULL; 
+  hdr->prev = NULL;
+
+  int exp = findexp(hdr->size-8);
+
+
+  while (exp < 22) {
+    metadata_t *buddy = (metadata_t*)get_buddy(hdr, exp);
+    if (buddy->in_use || buddy->size != hdr->size) {
+      break;
+    }              
+    if (buddy->next) {
+      buddy->next->prev = buddy->prev;
+    }
+    if (buddy->prev) {
+      buddy->prev->next = buddy->next;
+    } else {
+      free_lists[exp] = buddy->next;
+    }
+    if (buddy < hdr) {
+      hdr = buddy;
+    } 
+    hdr->size <<= 1;  
+    exp++;            
+  }
+
+  hdr->next = free_lists[exp];
+  if (free_lists[exp]) {
+    free_lists[exp]->prev = hdr;
+  }
+  hdr->prev = NULL;
+  free_lists[exp] = hdr;  
 }
+
+
+
