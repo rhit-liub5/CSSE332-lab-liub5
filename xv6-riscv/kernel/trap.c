@@ -10,6 +10,7 @@ struct spinlock tickslock;
 uint ticks;
 
 extern char trampoline[], uservec[], userret[];
+extern pte_t *walk(pagetable_t pagetable, uint64 va, int alloc);
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
@@ -67,6 +68,26 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  }else if(r_scause() == 15) {
+    uint64 va = PGROUNDDOWN(r_stval());
+    pte_t *pte = walk(p->pagetable, va, 0);
+
+    if(pte == 0 ||!(*pte & PTE_RSW)){
+      printf("Segmentation fault from process %d at address %p\n", p->pid, r_stval());
+      p->killed = 1;
+    }
+    char *mem = kalloc();
+    uint64 pa_old = PTE2PA(*pte);
+    memmove(mem, (char*)pa_old, PGSIZE);
+    kfree((void*)pa_old);
+
+    uint flags = PTE_FLAGS(*pte);
+    flags |= PTE_W;
+    flags &= ~PTE_RSW;
+
+    uvmunmap(p->pagetable, va, 1, 0); //把旧的 PTE 清掉这样就不会被认为是重复的了
+    mappages(p->pagetable, va, PGSIZE, (uint64)mem, flags);
+
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
