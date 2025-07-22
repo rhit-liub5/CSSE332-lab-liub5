@@ -1,0 +1,12 @@
+1:Start: Red
+3:Start: Red
+5:Start: Red
+8:Start: Red
+12:Start: Red
+16:Start: Red
+20:Start: Red
+23:Start: Red
+26:Start: Red
+29:Start: Red
+36:Start: Red
+39:Start: Red

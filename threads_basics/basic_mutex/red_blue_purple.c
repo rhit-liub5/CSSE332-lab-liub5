@@ -41,25 +41,37 @@ grep Red testout.txt
 If your code is right you should see an alternating Start/End
 
 */
+pthread_mutex_t red_lock  = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t blue_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void redCommand() {
+  pthread_mutex_lock(&red_lock);
   printf("Start: Red\n");
   usleep(100);
   printf("End  : Red\n");
+  pthread_mutex_unlock(&red_lock);
 }
 
 void blueCommand() {
+  pthread_mutex_lock(&blue_lock);
   printf("Start: Blue\n");
   usleep(100);
   printf("End  : Blue\n");
+  pthread_mutex_unlock(&blue_lock);
 }
 
 void purpleCommand() {
+  pthread_mutex_lock(&red_lock);
+  pthread_mutex_lock(&blue_lock);
+
   printf("Start: Blue\n");
   printf("Start: Red\n");
   usleep(100);
   printf("End  : Red\n");
   printf("End  : Blue\n");
+
+  pthread_mutex_unlock(&blue_lock);
+  pthread_mutex_unlock(&red_lock);  
 }
 
 void whiteCommand() {
@@ -116,6 +128,9 @@ int main(int argc, char **argv) {
   }
 
   printf("Everything finished\n");
+
+  pthread_mutex_destroy(&red_lock);
+  pthread_mutex_destroy(&blue_lock);
 
   return 0;
 }

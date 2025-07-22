@@ -14,7 +14,13 @@
 
 
 /* other global variable instantiations can go here */
-
+int total_nums;
+int* data_array;
+int line;
+int count = 0;
+long Ftime[100];
+long Btime[100];
+long Mtime[100];
 /* Uses a brute force method of sorting the input list. */
 void BruteForceSort(int inputList[], int inputLength) {
   int i, j, temp;
@@ -75,7 +81,7 @@ void MergeSort(int array[], int inputLength) {
     MergeSort(array, mid);
     MergeSort(array + mid, inputLength - mid);
     // merge's last input is an inclusive index
-    printf("calling merge 0->%d, 1->%d\n mid %d\n",array[0], array[1], mid); 
+    // printf("calling merge 0->%d, 1->%d\n mid %d\n",array[0], array[1], mid); 
     Merge(array, 0, mid, inputLength - 1);
   }
 }
@@ -83,14 +89,81 @@ void MergeSort(int array[], int inputLength) {
 // you might want some globals, put them here
 
 // here's a global I used you might find useful
-char* descriptions[] = {"brute force","bubble","merge"};
+char descriptions[] = {'F','B','M'};
 
 // I wrote a function called thread dispatch which parses the thread
 // parameters and calls the correct sorting function
 //
 // you can do it a different way but I think this is easiest
 void* thread_dispatch(void* data) {
+  char letter = *(char*)data;
+  struct timeval startt, stopt;       
+  long usecs_passed;
+  int start = count*line;
+  int end = (count+1)*line - 1;   
+  int* sub = data_array + count*line;
+  int id = count;
+  if (letter == 'F'){
+    count++;
+    printf("Sorting indexes %d-%d with brute force\n", start, end);
+    sleep(1);
+    gettimeofday(&startt, NULL);    
+    BruteForceSort(sub, line);
+    gettimeofday(&stopt, NULL);
+    usecs_passed = (stopt.tv_sec - startt.tv_sec) * 1000000 + (stopt.tv_usec - startt.tv_usec);
+    Ftime[id/3] = usecs_passed;
+    printf("Sorting indexes %d-%d with brute force done in %ld usecs\n", start, end, usecs_passed);
+  } else if (letter == 'B') {
+    sub = data_array + count*line;
+    count++;
+    printf("Sorting indexes %d-%d with bubble\n", start, end);
+    sleep(1);
+    gettimeofday(&startt, NULL);
+    BubbleSort(sub, line);
+    gettimeofday(&stopt, NULL);
+    usecs_passed = (stopt.tv_sec - startt.tv_sec) * 1000000 + (stopt.tv_usec - startt.tv_usec);
+    Btime[id/3] = usecs_passed;
+    printf("Sorting indexes %d-%d with bubble done in %ld usecs\n", start, end, usecs_passed);
+  } else if (letter == 'M') {
+    sub = data_array + count*line;
+    count++;  
+    printf("Sorting indexes %d-%d with merge\n", start, end);
+    sleep(1);
+    gettimeofday(&startt, NULL);
+    MergeSort(sub, line);
+    gettimeofday(&stopt, NULL);
+    usecs_passed = (stopt.tv_sec - startt.tv_sec) * 1000000 + (stopt.tv_usec - startt.tv_usec);
+    Mtime[id/3] = usecs_passed;
+    printf("Sorting indexes %d-%d with merge done in %ld usecs\n", start, end, usecs_passed);
+  }
+  return NULL;
+}
 
+double average(const long arr[], int len) {
+    if (len <= 0) return 0.0;
+    long sum = 0;
+    for (int i = 0; i < len; i++) {
+        sum += arr[i];
+    }
+    return (double)sum / len;
+}
+
+long find_min(const long arr[], int len) {
+    if (len <= 0) return 0;
+    long m = arr[0];
+    for (int i = 1; i < len; i++) {
+        if (arr[i] < m) m = arr[i];
+    }
+    return m;
+}
+
+long find_max(const long arr[], int len) {
+    if (len <= 0) return 0;
+    long m = arr[0];
+    for (int i = 1; i < len; i++) {
+        if (arr[i] > m) m = arr[i];
+    }
+    return m;
 }
 
 int main(int argc, char** argv) {
@@ -116,8 +189,10 @@ int main(int argc, char** argv) {
     exit(1);
   }
 
-  int total_nums = n * vals_per_thread;
-  int* data_array = malloc(sizeof(int) * total_nums);
+  total_nums = n * vals_per_thread;
+  data_array = malloc(sizeof(int) * total_nums);
+  line = vals_per_thread;
+
   if(data_array == NULL) {
     perror("malloc failure");
     exit(1);
@@ -133,20 +208,40 @@ int main(int argc, char** argv) {
   }
 
   // create your threads here
+  pthread_t tids[n];
 
+  for (int i = 0; i < n; i++) {
+    pthread_create(&tids[i], NULL, thread_dispatch, &descriptions[i % 3]);
+  }
   // wait for them to finish
-
+  for (int i = 0; i < n; i++) {
+      pthread_join(tids[i], NULL);  
+  }
   // print out the algorithm summary statistics
-
+  long Favg = average(Ftime, n/3);
+  long Bavg = average(Btime, n/3);
+  long Mavg = average(Mtime, n/3);
+  long Fmin = find_min(Ftime, n/3);
+  long Bmin = find_min(Btime, n/3);
+  long Mmin = find_min(Mtime, n/3);
+  long Fmax = find_max(Ftime, n/3);
+  long Bmax = find_max(Btime, n/3);
+  long Mmax = find_max(Mtime, n/3);
+  printf("brute force avg %ld min %ld max %ld\n", 
+        Favg, Fmin, Fmax);
+  printf("bubble avg %ld min %ld max %ld\n", 
+        Bavg, Bmin, Bmax);
+  printf("merge avg %ld min %ld max %ld\n", 
+        Mavg, Mmin, Mmax);  
   // print out the result array so you can see the sorting is working
   // you might want to comment this out if you're testing with large data sets
   printf("Result array:\n");
   for(int i = 0; i < n; i++) {
     for(int j = 0; j < vals_per_thread; j++) {
       printf("%d ", data_array[i*vals_per_thread + j]);
+
     }
     printf("\n");
   }
-
   free(data_array); // we should free what we malloc
 }
