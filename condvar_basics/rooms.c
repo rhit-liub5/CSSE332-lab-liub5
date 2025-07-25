@@ -17,18 +17,31 @@
 // capture the of customers that leave early
 int num_left_customers = 0;
 // TODO: Define other state of the world variables here
-
+int first_room = 0;
+int second_room = 0;
+int waiting_room = 0;
 // TODO: Define your mutex locks and condition variables:
+pthread_cond_t  c;
+pthread_mutex_t m;
 
 void *customer(void *arg)
 {
   long int tid = (long int)arg;
 
-  printf("[Customer %ld] Just arrived at first room...\n", tid);
+  pthread_mutex_lock(&m);
 
+  printf("[Customer %ld] Just arrived at first room...\n", tid);
   // Enter the first room.
+  while(first_room >= 5){
+    pthread_cond_wait(&c, &m);
+  }
+  first_room++;
   printf("[Customer %ld] Entered first room...\n", tid);
+
   sleep(FIRST_ROOM_SERVICE_RATE);
+  first_room--;
+  pthread_cond_signal(&c);
+  pthread_mutex_unlock(&m);
   printf("[Customer %ld] Left first room...\n", tid);
 
   // You might want to check if you need to enter the waiting room here or leave
@@ -43,8 +56,29 @@ void *customer(void *arg)
   // printf("[Customer %ld] Joined the waiting room for second room...\n", tid);
 
   // Enter the second room
+  pthread_mutex_lock(&m);
+
   printf("[Customer %ld] Entered second room...\n", tid);
+
+  if (second_room < 2){
+    second_room++;
+  }else if (waiting_room <2){
+    waiting_room++;
+    while (second_room>=2){
+      pthread_cond_wait(&c, &m);
+    }
+    waiting_room--;
+  } else {
+    num_left_customers++;
+    printf("[Customer %ld] Left unhappy because second room is full...\n", tid);
+    pthread_mutex_unlock(&m);
+    return 0;
+  }
+  
   sleep(SECOND_ROOM_SERVICE_RATE);
+  second_room--;
+  pthread_cond_signal(&c);
+  pthread_mutex_unlock(&m);
   printf("[Customer %ld] Left second room...\n", tid);
 
   // Done, time to leave...
