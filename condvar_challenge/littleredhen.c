@@ -32,6 +32,10 @@
 
  **/
 
+ pthread_mutex_t  bread_mutex    = PTHREAD_MUTEX_INITIALIZER;
+ pthread_cond_t   bread_ready    = PTHREAD_COND_INITIALIZER;
+ pthread_cond_t   need_more_bread = PTHREAD_COND_INITIALIZER;
+
 int numLoaves;
 
 void *littleRedHenThread(void *arg) {
@@ -39,14 +43,24 @@ void *littleRedHenThread(void *arg) {
   int batch;
 
   for (batch = 1; batch <= 6; batch++) {
+    pthread_mutex_lock(&bread_mutex);
+    while (numLoaves > 0) {
+      pthread_cond_wait(&need_more_bread, &bread_mutex);
+    }
     sleep(2);  // just makes it obvious that it won't work without
                // condition variables
     numLoaves += 7;
     printf("%-20s: A fresh batch of bread is ready.\n", name);
+
+    pthread_cond_broadcast(&bread_ready);
+    pthread_mutex_unlock(&bread_mutex);
   }
 
   printf("%-20s: I'm fed up with feeding you lazy animals! "
          "No more bread!\n", name);
+  pthread_mutex_lock(&bread_mutex);
+  pthread_cond_broadcast(&bread_ready);
+  pthread_mutex_unlock(&bread_mutex);         
   return NULL;
 }
 
@@ -54,10 +68,17 @@ void *otherAnimalThread(void *arg) {
   char *name = (char*)arg;
   int numLoavesEaten = 0;
   while (numLoavesEaten < NUM_LOAVES_TO_EAT) {
+    pthread_mutex_lock(&bread_mutex);
+    while (numLoaves == 0) {
+        pthread_cond_signal(&need_more_bread);
+        pthread_cond_wait(&bread_ready, &bread_mutex);
+    }
     if (numLoaves <= 0) {
       printf("%-20s: Hey, Little Red Hen, make some more bread!\n", name);
     }
     numLoaves--;
+    pthread_mutex_unlock(&bread_mutex);
+    
     printf("%-20s: Mmm, this loaf is delicious.\n", name);
     numLoavesEaten++;
     if (random() > random()) {  // Adds variety to output

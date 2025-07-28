@@ -28,28 +28,81 @@
 
   This is similar to the readers/writers problem BTW.
  **/
+ pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+ pthread_cond_t  cond  = PTHREAD_COND_INITIALIZER;
+
+ int active_job = 0;  
+ int active_count = 0; 
 
 void* carpenter(void * ignored) {
+  int type = 1;
+  pthread_mutex_lock(&mutex);
+  while (type != active_job && active_count != 0) {
+    pthread_cond_wait(&cond, &mutex);
+  }
+  active_job = type;
+  active_count++;
+  pthread_mutex_unlock(&mutex);
 
   printf("starting carpentry\n");
   sleep(1);
+
+  pthread_mutex_lock(&mutex);
   printf("finished carpentry\n");
+  active_count--;
+  if (active_count == 0) {
+    active_job = 0;
+    pthread_cond_broadcast(&cond);
+  }
+  pthread_mutex_unlock(&mutex);
   return NULL;
 }
 
 void* painter(void * ignored) {
+  int type = 2;
+  pthread_mutex_lock(&mutex);
+  while (type != active_job && active_count != 0) {
+    pthread_cond_wait(&cond, &mutex);
+  }
+  active_job = type;
+  active_count++;
+  pthread_mutex_unlock(&mutex);
 
-  printf("starting painting\n");
+  printf("starting painter\n");
   sleep(1);
-  printf("finished painting\n");
+
+  pthread_mutex_lock(&mutex);
+  printf("finished painter\n");
+  active_count--;
+  if (active_count == 0) {
+    active_job = 0;
+    pthread_cond_broadcast(&cond);
+  }
+  pthread_mutex_unlock(&mutex);
   return NULL;
 }
 
 void* decorator(void * ignored) {
+  int type = 3;
+  pthread_mutex_lock(&mutex);
+  while (type != active_job && active_count != 0) {
+    pthread_cond_wait(&cond, &mutex);
+  }
+  active_job = type;
+  active_count++;
+  pthread_mutex_unlock(&mutex);
 
-  printf("starting decorating\n");
+  printf("starting decorator\n");
   sleep(1);
-  printf("finished decorating\n");
+
+  pthread_mutex_lock(&mutex);
+  printf("finished decorator\n");
+  active_count--;
+  if (active_count == 0) {
+    active_job = 0;
+    pthread_cond_broadcast(&cond);
+  }
+  pthread_mutex_unlock(&mutex);
   return NULL;
 }
 

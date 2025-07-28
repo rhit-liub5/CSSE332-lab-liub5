@@ -57,17 +57,55 @@ int GUIT = 2;
 
 char* names[] = {"drummer", "singer", "guitarist"};
 
-
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
+int waiting[3] = {0, 0, 0}; 
+int working[3] = {0, 0, 0};
+bool use = false; 
+int band_members = 0;
 
 // because the code is similar, we'll just have one kind of thread
 // and we'll pass its kind as a parameter
 void* friend(void * kind_ptr) {
   int kind = *((int*) kind_ptr);
+
   printf("%s arrived\n", names[kind]);
+  pthread_mutex_lock(&mutex);
+  waiting[kind]++;
+  // if (!use&& waiting[DRUM] > 0&& waiting[SING] > 0&& waiting[GUIT] > 0) {
+  //   waiting[DRUM]--;
+  //   waiting[SING]--;
+  //   waiting[GUIT]--;
+  //   use = true;
+  //   band_members = 3;
+  //   pthread_cond_broadcast(&cv);
+  // }
+  // while (!use || working[kind] != 0) {
+  //   pthread_cond_wait(&cv, &mutex);
+  // }
+  while(!waiting[DRUM] > 0|| !waiting[SING] > 0|| !waiting[GUIT] > 0|| working[kind] != 0){
+    pthread_cond_wait(&cv, &mutex);
+  }
+  working[kind]++;
+  band_members++;
+  if(!use){
+    use = true;
+    pthread_cond_broadcast(&cv);
+  }
+  pthread_mutex_unlock(&mutex);
+
   printf("%s playing\n", names[kind]);
   sleep(1);
   printf("%s finished playing\n", names[kind]);
-
+  pthread_mutex_lock(&mutex);
+  working[kind]--;
+  waiting[kind]--;
+  band_members--;
+  if (band_members == 0) {
+    use = false;
+    pthread_cond_broadcast(&cv);
+  }
+  pthread_mutex_unlock(&mutex);
   return NULL;
 }
 

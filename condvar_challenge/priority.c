@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 
 /**
@@ -18,15 +19,42 @@
   section as the current thread finishes, bypassing priority rules.
   Solve this problem with mutexes/condition variables
  **/
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cv[6] = {
+    PTHREAD_COND_INITIALIZER,
+    PTHREAD_COND_INITIALIZER,
+    PTHREAD_COND_INITIALIZER,
+    PTHREAD_COND_INITIALIZER,
+    PTHREAD_COND_INITIALIZER,
+    PTHREAD_COND_INITIALIZER,
+};
+bool use = false;
+int waiting[6];
 
 void *thread(void *arg)
 {
   int *num = (int *) arg;
+  int i = 5;
   printf("%d wants to enter the critical section\n", *num);
+  pthread_mutex_lock(&mutex);
+  waiting[*num-1]++;
+  while (use) {
+    pthread_cond_wait(&cv[*num-1], &mutex);
+  }  
+  use = true;
+  pthread_mutex_unlock(&mutex);
 
   printf("%d has entered the critical section\n", *num);
   sleep(1);
   printf("%d is finished with the critical section\n", *num);
+  pthread_mutex_lock(&mutex);
+  waiting[*num-1]--;
+  while(waiting[i] == 0) {
+    i--;
+  }
+  use = false;
+  pthread_cond_signal(&cv[i]);
+  pthread_mutex_unlock(&mutex);
 
   return NULL;
 }
