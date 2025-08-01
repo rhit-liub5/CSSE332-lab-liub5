@@ -87,22 +87,59 @@ green in northsouth direction
 
  */
 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cvns = PTHREAD_COND_INITIALIZER;
+pthread_cond_t cvew = PTHREAD_COND_INITIALIZER;
+pthread_cond_t lightcv = PTHREAD_COND_INITIALIZER;
+// 0 = yellow, 1 = green northsouth, 2 = green eastwest
+int light = 1;
+int nscar = 0;
+int ewcar = 0;
+
 
 void *north_south(void *arg)
 {
   printf("northsouth car nearing intersection\n");
+  pthread_mutex_lock(&mutex);
+  while(light != 1) {
+    pthread_cond_wait(&cvns, &mutex);
+  }
+  nscar++;
+  pthread_mutex_unlock(&mutex);
+
   printf("northsouth car entering intersection\n");
   sleep(1);
   printf("northsouth car leaving intersection\n");
+
+  pthread_mutex_lock(&mutex);
+  nscar--;
+  if(nscar == 0 && light == 0){
+    pthread_cond_signal(&lightcv);
+  }
+  pthread_mutex_unlock(&mutex);
 }
 
 
 void *east_west(void *arg)
 {
   printf("eastwest car nearing intersection\n");
+  pthread_mutex_lock(&mutex);
+  while(light != 1) {
+    pthread_cond_wait(&cvns, &mutex);
+  }
+  ewcar++;
+  pthread_mutex_unlock(&mutex);
+
   printf("eastwest car entering intersection\n");
   sleep(1);
   printf("eastwest car leaving intersection\n");
+
+  pthread_mutex_lock(&mutex);
+  ewcar--;
+  if(ewcar == 0 && light == 0){
+    pthread_cond_signal(&lightcv);
+  }
+  pthread_mutex_unlock(&mutex);
 }
 
 
@@ -110,17 +147,32 @@ void *stoplight(void *arg)
 {
 
   while(1) {
-
     sleep(1);
     printf("yellow\n");
 
-    // we need to wait for the intersection to clear
+    pthread_mutex_lock(&mutex);
+    light = 0;
+    while(nscar>0){
+      pthread_cond_wait(&lightcv,&mutex);
+    }
     printf("green in eastwest direction\n");
-    sleep(1);
-    printf("yellow");
+    light = 2;
+    pthread_cond_broadcast(&cvew);
+    pthread_mutex_unlock(&mutex);
     // we need to wait for the intersection to clear
+    sleep(1);
+    printf("yellow\n");
+    // we need to wait for the intersection to clear
+    
+    pthread_mutex_lock(&mutex);
+    light = 0;
+    while(ewcar>0){
+      pthread_cond_wait(&lightcv,&mutex);
+    }
     printf("green in northsouth direction\n");
-
+    light = 1;
+    pthread_cond_broadcast(&cvns);
+    pthread_mutex_unlock(&mutex);
   }
 
 }
