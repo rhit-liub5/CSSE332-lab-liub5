@@ -34,6 +34,8 @@ these functions here in the .c file rather than the header.
 
 // storage for your thread data
 ucontext_t threads[MAX_THREADS];
+ucontext_t child, parent;
+bool child_done;
 
 
 // add additional constants and globals here as you need
@@ -59,7 +61,7 @@ ucontext_t threads[MAX_THREADS];
 
 */
 void initialize_basic_threads() {
-
+   child_done = false;
 }
 
 /*
@@ -94,7 +96,22 @@ create_new_thread(thread_function());
 
 */
 void create_new_thread(void (*fun_ptr)()) {
+  getcontext(&child);
 
+  // Modify the context to a new stack
+  child.uc_link = 0;
+  child.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
+  child.uc_stack.ss_size = THREAD_STACK_SIZE;
+  child.uc_stack.ss_flags = 0;
+  if (child.uc_stack.ss_sp == 0)
+  {
+    perror("malloc: Could not allocate stack");
+    exit(1);
+  }
+
+  // Create the new context
+  printf("Creating child thread\n");
+  makecontext(&child, fun_ptr, 0);
 }
 
 
@@ -204,6 +221,7 @@ finish_thread();
 
 */
 void yield() {
+    swapcontext(&child, &parent);
 
 }
 
@@ -232,5 +250,7 @@ printf("If this lines prints, finish thread is broken\n");
 
 */
 void finish_thread() {
+   child_done = true;
+   swapcontext(&child, &parent);
 
 }
