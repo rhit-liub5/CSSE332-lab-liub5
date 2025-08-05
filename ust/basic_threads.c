@@ -34,9 +34,26 @@ these functions here in the .c file rather than the header.
 
 // storage for your thread data
 ucontext_t threads[MAX_THREADS];
-ucontext_t child, parent;
-bool child_done;
+bool active[MAX_THREADS];
+int num_threads;
+int current = 0;
+ucontext_t scheduler;
 
+int find_empty(){
+   int i=0;
+   while(active[i]){
+      i++;
+      if (i>=MAX_THREADS){
+         return -1;
+      }
+   }
+   return i;
+}
+
+static void thread_helper(void (*real_fn)(void*), void *arg) {
+    real_fn(arg);
+    finish_thread();
+}
 
 // add additional constants and globals here as you need
 
@@ -61,7 +78,10 @@ bool child_done;
 
 */
 void initialize_basic_threads() {
-   child_done = false;
+   for (int i = 0;i<MAX_THREADS;i++){
+      active[i] = false;
+   }
+   num_threads = 0;
 }
 
 /*
@@ -96,22 +116,32 @@ create_new_thread(thread_function());
 
 */
 void create_new_thread(void (*fun_ptr)()) {
-  getcontext(&child);
-
-  // Modify the context to a new stack
-  child.uc_link = 0;
-  child.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
-  child.uc_stack.ss_size = THREAD_STACK_SIZE;
-  child.uc_stack.ss_flags = 0;
-  if (child.uc_stack.ss_sp == 0)
-  {
-    perror("malloc: Could not allocate stack");
-    exit(1);
-  }
-
-  // Create the new context
-  printf("Creating child thread\n");
-  makecontext(&child, fun_ptr, 0);
+//   int empty = find_empty();
+//   if (empty == -1){
+//       perror("I don't have enough place");
+//       exit(1);
+//   }
+//   ucontext_t *child = &threads[empty];
+//   getcontext(child);
+//   // Modify the context to a new stack
+//   child->uc_link = &scheduler;
+//   child->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
+//   child->uc_stack.ss_size = THREAD_STACK_SIZE;
+//   child->uc_stack.ss_flags = 0;
+//   if (child->uc_stack.ss_sp == 0)
+//   {
+//      perror("malloc: Could not allocate stack");
+//      exit(1);
+//    }
+   
+//    // Create the new context
+//    printf("Creating child thread\n");
+//    makecontext(child, fun_ptr, 0);
+//    active[empty] = true;
+//    if (empty >= num_threads) {
+//       num_threads = empty + 1;
+//    }
+   create_new_parameterized_thread((void(*)(void*))fun_ptr, NULL);
 }
 
 
@@ -142,7 +172,32 @@ schedule_threads();
 */
 
 void create_new_parameterized_thread(void (*fun_ptr)(void*), void* parameter) {
-
+  int empty = find_empty();
+  if (empty == -1){
+      perror("I don't have enough place");
+      exit(1);
+  }
+  ucontext_t *child = &threads[empty];
+  getcontext(child);
+  // Modify the context to a new stack
+  child->uc_link = &scheduler;
+  child->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
+  child->uc_stack.ss_size = THREAD_STACK_SIZE;
+  child->uc_stack.ss_flags = 0;
+  if (child->uc_stack.ss_sp == 0)
+  {
+     perror("malloc: Could not allocate stack");
+     exit(1);
+   }
+   
+   // Create the new context
+   printf("Creating child thread\n");
+   void (*helper)() = (void(*)())thread_helper;
+   makecontext(child, helper, 2, fun_ptr, parameter);
+   active[empty] = true;
+   if (empty >= num_threads) {
+      num_threads = empty + 1;
+   }
 }
 
 
@@ -178,7 +233,23 @@ void create_new_parameterized_thread(void (*fun_ptr)(void*), void* parameter) {
    printf("All threads finished");
    */
 void schedule_threads() {
-
+   getcontext(&scheduler);
+   while(true){
+      bool run = false;
+      for(int i=0;i<num_threads;i++){
+         if(active[i]){
+            run = true;
+            current = i;
+            swapcontext(&scheduler, &threads[i]);
+            if (!active[i]) {
+               free(threads[i].uc_stack.ss_sp);
+            }
+         }
+      }
+      if (!run){
+         break;
+      } 
+   }
 }
 
 /*
@@ -221,7 +292,7 @@ finish_thread();
 
 */
 void yield() {
-    swapcontext(&child, &parent);
+    swapcontext(&threads[current], &scheduler);
 
 }
 
@@ -250,7 +321,7 @@ printf("If this lines prints, finish thread is broken\n");
 
 */
 void finish_thread() {
-   child_done = true;
-   swapcontext(&child, &parent);
+   active[current] = false;
+   swapcontext(&threads[current], &scheduler);
 
 }

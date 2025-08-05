@@ -14,8 +14,8 @@ http://www.evanjones.ca/software/threading.html
 // 64kB stack
 #define THREAD_STACK_SIZE 1024 * 64
 
-ucontext_t child, parent;
-bool child_done;
+static ucontext_t child, parent;
+static bool child_done;
 
 // The child thread will execute this function
 void threadFunction()
