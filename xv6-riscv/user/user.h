@@ -1,7 +1,11 @@
 struct stat;
 
+
 // system calls
 int fork(void);
+int spoon(void*);
+int thread_create(void (*start_routine)(void*), void *arg);
+int thread_join(int tid);
 int exit(int) __attribute__((noreturn));
 int wait(int*);
 int pipe(int*);

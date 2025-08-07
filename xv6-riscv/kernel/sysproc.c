@@ -89,3 +89,29 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+
+uint64 sys_spoon(void)
+{
+  uint64 addr;
+  argaddr(0, &addr);
+  return spoon((void*)addr);
+}
+
+uint64 sys_thread_create(void) {
+  uint64 fn, arg;
+  argaddr(0, &fn);   
+  argaddr(1, &arg);
+  printf("thread_create called with fn=%p arg=%p\n", fn, arg);
+  printf("This call has not been implemented yet!\n");
+  return 0;
+}
+
+uint64 sys_thread_join(void) {
+  int tid;
+  argint(0, &tid);
+  printf("thread_join called with tid=%d\n", tid);
+  printf("This call has not been implemented yet!\n");
+  return 0;
+}
+

@@ -26,6 +26,23 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+uint64 spoon(void *arg)
+{
+  printf("In spoon system call with argument %p\n", arg);
+  return 0;
+}
+
+uint64 thread_create(void (*start_routine)(void*), void *arg) {
+  // 暂时不实现
+  return 0;
+}
+
+uint64 thread_join(int tid) {
+  // 暂时不实现
+  return 0;
+}
+
+
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
