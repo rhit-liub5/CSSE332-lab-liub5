@@ -12,11 +12,16 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
+struct list_head runpro;       
+struct spinlock pro_lock;
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
+static void pro_push(struct proc *p);
+static struct proc* pro_pop(void) __attribute__((unused));
 
 extern char trampoline[]; // trampoline.S
 
@@ -51,10 +56,13 @@ procinit(void)
   
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
+  init_list_head(&runpro);              
+  initlock(&pro_lock, "runpro"); 
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->state = UNUSED;
       p->kstack = KSTACK((int) (p - proc));
+      init_list_head(&p->node);
   }
 }
 
@@ -124,6 +132,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  init_list_head(&p->node);
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -250,6 +259,7 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+  pro_push(p);
 
   release(&p->lock);
 }
@@ -320,6 +330,7 @@ fork(void)
 
   acquire(&np->lock);
   np->state = RUNNABLE;
+  pro_push(np);
   release(&np->lock);
 
   return pid;
@@ -442,6 +453,25 @@ __wfi(void)
   asm volatile("wfi");
 }
 
+static void pro_push(struct proc *p){
+  acquire(&pro_lock);
+  list_del_init(&p->node);          
+  list_add_tail(&runpro, &p->node);
+  release(&pro_lock);
+}
+
+static struct proc* pro_pop(void){
+  acquire(&pro_lock);
+  struct list_head *e = runpro.next;
+  if(e == &runpro){          
+    release(&pro_lock);              
+    return 0;
+  }
+  list_del_init(e);                     
+  release(&pro_lock);
+  return (struct proc*)e;     
+}
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -449,33 +479,34 @@ __wfi(void)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+
 void
 scheduler(void)
 {
-  struct proc *p;
   struct cpu *c = mycpu();
-  
   c->proc = 0;
+
   for(;;){
-    // Avoid deadlock by ensuring that devices can interrupt.
-    intr_on();
+    intr_on();                               
 
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-      }
-      release(&p->lock);
+    struct proc *p = pro_pop();         
+    if(p == 0){
+      intr_on();                            
+      __wfi();                           
+      continue;
     }
+
+    acquire(&p->lock);
+    if(p->state == RUNNABLE){
+      p->state = RUNNING;
+      c->proc = p;
+      swtch(&c->context, &p->context);        
+      c->proc = 0;
+      release(&p->lock);           
+    }else{
+      release(&p->lock);
+    } 
+
   }
 }
 
@@ -513,6 +544,7 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
+  pro_push(p);
   sched();
   release(&p->lock);
 }
@@ -581,6 +613,7 @@ wakeup(void *chan)
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
         p->state = RUNNABLE;
+        pro_push(p);
       }
       release(&p->lock);
     }
@@ -602,6 +635,7 @@ kill(int pid)
       if(p->state == SLEEPING){
         // Wake process from sleep().
         p->state = RUNNABLE;
+        pro_push(p);
       }
       release(&p->lock);
       return 0;
