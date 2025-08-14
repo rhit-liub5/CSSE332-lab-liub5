@@ -104,4 +104,12 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  //线程部分
+  int is_thread;              // 1 = 这是一个线程（共享地址空间）；0 = 进程（线程组组长）
+  struct proc *tg_leader;     // 线程组的“组长”（拥有地址空间的那个 proc，通常是创建者）
+  int tid;                    // 线程ID（里程碑2：可直接复用 pid 作为 tid）
+  uint64 ustack_base;         // 该线程用户栈的起始虚拟地址（含底部地址，便于调试/回收）
+  uint64 ustack_size;         // 该线程用户栈大小（字节）
+
 };
