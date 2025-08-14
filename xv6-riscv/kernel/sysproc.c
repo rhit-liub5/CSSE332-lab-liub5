@@ -6,6 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 
+
 uint64
 sys_exit(void)
 {
@@ -102,16 +103,14 @@ uint64 sys_thread_create(void) {
   uint64 fn, arg;
   argaddr(0, &fn);   
   argaddr(1, &arg);
-  printf("thread_create called with fn=%p arg=%p\n", fn, arg);
-  printf("This call has not been implemented yet!\n");
-  return 0;
+  int ret = thread_create((void (*)(void *))fn, (void *)arg);
+  return ret;    
 }
 
 uint64 sys_thread_join(void) {
   int tid;
   argint(0, &tid);
-  printf("thread_join called with tid=%d\n", tid);
-  printf("This call has not been implemented yet!\n");
-  return 0;
+  int ret = thread_join(tid);
+  return ret;  
 }
 
