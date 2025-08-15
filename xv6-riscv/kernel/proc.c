@@ -25,6 +25,7 @@ extern char trampoline[]; // trampoline.S
 // memory model when using p->parent.
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
+static struct proc* allocproc(void);
 
 uint64 spoon(void *arg)
 {
@@ -32,9 +33,79 @@ uint64 spoon(void *arg)
   return 0;
 }
 
-uint64 thread_create(void (*start_routine)(void*), void *arg) {
-  // 暂时不实现
-  return 0;
+uint64 thread_create(void (*start_fn)(void *), void *arg)
+{
+  int i;
+  struct proc *np;
+  struct proc *p = myproc();
+
+  // 1) 分配新的 schedulable 实体（内核栈、trapframe、空用户页表（含 trampoline+trapframe 映射））
+  if((np = allocproc()) == 0){
+    return -1;
+  }
+
+  // 2) 共享用户地址空间：把父方 [0, p->sz) 的用户页，按相同虚拟地址映射到子线程的页表
+  //    这里我们不复制物理页，只是把相同的物理页再次映射到 np->pagetable，
+  uint64 sz = PGROUNDUP(p->sz); //向上取整，确保整页
+  for(uint64 va = 0; va < sz; va += PGSIZE){  //遍历所有的页
+    uint64 pa = walkaddr(p->pagetable, va);   // p->pagetable提供页表 va提供需要查询的虚拟地址，最终得到物理地址
+    if(mappages(np->pagetable, va, PGSIZE, pa, PTE_R|PTE_W|PTE_X|PTE_U) != 0){   //将虚拟地址映射到物理地址，记录在np->pagetable页表上，PGSIZE表示映射大小
+                                                                                //PTE_R|PTE_W|PTE_X|PTE_U表示权限 允许读、写、执行、用户态访问
+      freeproc(np); 
+      release(&np->lock);
+      return -1;
+    }
+  }
+  np->sz = p->sz;   // 共享同一“数据/堆”上限（注意：我们马上会只在子线程页表里再长出栈）
+
+  // 3) 独立的用户栈（仅映射在子线程的页表中）
+  //    简化方案：在 np 的地址空间末尾增加 1 页作为栈（里程碑2允许不把这页同步回其它线程）
+  uint64 userstart = PGROUNDUP(np->sz); 
+  uint64 newsz = userstart + PGSIZE;              // 1 页栈（可改成 2 页并做 guard）
+  if(uvmalloc(np->pagetable, userstart, newsz,PTE_R | PTE_W | PTE_U) == 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+  np->start = userstart;          // 记录该线程用户栈的起始地址（底部）
+  np->size  = PGSIZE;        // 栈大小
+  uint64 sp = userstart + PGSIZE; // 栈顶（向下生长）
+
+  // 4) 拷贝父线程的 trapframe 基线，然后设置入口 PC / SP / a0
+  //trapframe 是一个内核用来保存用户态 CPU 寄存器状态的结构体，当用户进程发生中断、陷入（trap）到内核时，内核会把所有重要的寄存器值（包括 PC、SP、通用寄存器等）存到这个结构体中。
+  *(np->trapframe) = *(p->trapframe);
+  np->trapframe->epc = (uint64)start_fn;   // 从用户给定的函数开始执行
+  np->trapframe->sp  = sp;                 // 新栈顶
+  np->trapframe->a0  = (uint64)arg;        // 第一个参数传给 start(void*)
+
+  // 5) 共享打开文件（与 fork 相同地 filedup），cwd 也共享
+  for(i = 0; i < NOFILE; i++){
+    if(p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
+  }
+  np->cwd = idup(p->cwd);
+
+  safestrcpy(np->name, p->name, sizeof(np->name));
+
+  // 6) 线程组标记与亲缘关系
+  np->is_thread = 1;
+  np->father    = (p->is_thread ? p->father : p); // 组长（拥有地址空间的那个）
+  np->tid       = np->pid;                        // 里程碑2：直接用 pid 当 tid
+
+  int tid = np->tid;
+
+  // 7) 常规 parent / 可运行
+  release(&np->lock);
+
+  acquire(&wait_lock);
+  np->parent = p;   
+  release(&wait_lock);
+
+  acquire(&np->lock);
+  np->state = RUNNABLE;
+  release(&np->lock);
+
+  return tid;
 }
 
 uint64 thread_join(int tid) {
