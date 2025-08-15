@@ -1,0 +1,30 @@
+---
+title: Project Milestone 2
+Author(s): Borui Liu
+Date: 8/14/2025
+---
+
+High level description
+======================
+
+In general, I have completed the important method of thread-create.
+
+Thread creation
+================
+In this method, I first use allocproc to obtain the space I need. 
+Then, through a loop, I create the parent thread's pagetable and transfer it to the child thread. 
+Then, using uvmalloc, I allocate user space for my child thread, occupying one page. 
+The rest of the process is similar to fork, except that I need to modify the thread entry function address, the new stack top address, and the entry function parameters.
+
+Memory sharing
+===============
+
+The new thread shares the same pagetable with the parent thread, so global variables and heap data are shared, and modifications to global variables are visible to all threads.
+
+Test cases
+===========
+I created a simple test that adds 10 to my global variable through thread 1, and then adds 20 to my global variable through thread 2. The final result is 30.
+
+Addition comments
+==================
+I also made some changes to proc.h. I added some parameters specifically for thread, which will facilitate my subsequent thread-join and other functions.
