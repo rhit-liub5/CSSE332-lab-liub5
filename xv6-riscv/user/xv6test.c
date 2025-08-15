@@ -1,7 +1,7 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
-#include "user/user.h" 
-#include "kernel/fcntl.h"
+#include "user/user.h"
+#include "user/cool_threads.h"
 
 int g = 0;
 
@@ -31,26 +31,18 @@ int g = 0;
 //   exit(0);
 // }
 
-static void test_global(void *arg) {
+static void worker(void *arg) {
   int me = (int)(uint64)arg;
-
-  g = g+me;
-  printf("test %d change global now will be %d \n",me,g);
-
-  for (;;)
-  sleep(1000);
-
+  g += me;
+  printf("I am %d current %d\n", me, g);
+  for(;;)
+  sleep(1000); 
 }
 
-int
-main(int argc, char *argv[])
-{
-  printf("start\n");
-
-  thread_create(test_global, (void*)10);
+int main() {
+  ct_create(worker, (void*)10);
   sleep(50);
-  thread_create(test_global, (void*)20);
-  sleep(5000);
-
+  ct_create(worker, (void*)20);
+  sleep(1000);
   exit(0);
 }
