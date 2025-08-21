@@ -1,3 +1,4 @@
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -17,6 +18,7 @@ struct context {
   uint64 s10;
   uint64 s11;
 };
+
 
 // Per-CPU state.
 struct cpu {
@@ -93,13 +95,14 @@ struct proc {
   int pid;                     // Process ID
 
   // wait_lock must be held when using this:
-  struct proc *parent;         // Parent process
+  struct proc *parent;         // Parent process  我们需要复制这个
 
   // these are private to the process, so p->lock need not be held.
-  uint64 kstack;               // Virtual address of kernel stack
+  uint64 kstack;               // Virtual address of kernel stack 我们需要复制这个
   uint64 sz;                   // Size of process memory (bytes)
-  pagetable_t pagetable;       // User page table
-  struct trapframe *trapframe; // data page for trampoline.S
+  pagetable_t pagetable;       // User page table  我们需要复制这个
+
+  struct trapframe *trapframe; // data page for trampoline.S 我们需要复制这个
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
@@ -111,5 +114,4 @@ struct proc {
   int tid;                    // 线程ID（里程碑2：可直接复用 pid 作为 tid）
   uint64 start;         // 该线程用户栈的起始虚拟地址（含底部地址，便于调试/回收）
   uint64 size;         // 该线程用户栈大小（字节）
-
 };

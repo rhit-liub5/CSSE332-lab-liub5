@@ -33,9 +33,19 @@ uint64 spoon(void *arg)
   return 0;
 }
 
+static inline struct proc* group_leader(struct proc *p) {
+  return p->is_thread ? p->father : p;
+}
+
+// 判断 q 是否属于以 leader 为组长的线程组（包含 leader 自己）。
+static inline int in_same_group(struct proc *q, struct proc *leader) {
+  if(q->state == UNUSED) return 0;
+  return (q == leader) || (q->is_thread && q->father == leader);
+}
+
 uint64 thread_create(void (*start_fn)(void *), void *arg)
 {
-  int i;
+ int i;
   struct proc *np;
   struct proc *p = myproc();
 
@@ -43,40 +53,66 @@ uint64 thread_create(void (*start_fn)(void *), void *arg)
   if((np = allocproc()) == 0){
     return -1;
   }
+  struct proc *leader = group_leader(p);
+  np->sz = leader->sz;   // 共享当前地址空间“上界”
 
   // 2) 共享用户地址空间：把父方 [0, p->sz) 的用户页，按相同虚拟地址映射到子线程的页表
   //    这里我们不复制物理页，只是把相同的物理页再次映射到 np->pagetable，
-  uint64 sz = PGROUNDUP(p->sz); //向上取整，确保整页
-  for(uint64 va = 0; va < sz; va += PGSIZE){  //遍历所有的页
-    uint64 pa = walkaddr(p->pagetable, va);   // p->pagetable提供页表 va提供需要查询的虚拟地址，最终得到物理地址
-    if(mappages(np->pagetable, va, PGSIZE, pa, PTE_R|PTE_W|PTE_X|PTE_U) != 0){   //将虚拟地址映射到物理地址，记录在np->pagetable页表上，PGSIZE表示映射大小
-                                                                                //PTE_R|PTE_W|PTE_X|PTE_U表示权限 允许读、写、执行、用户态访问
-      freeproc(np); 
+  uint64 psz = PGROUNDUP(p->sz);
+  for (uint64 va = 0; va < psz; va += PGSIZE) {
+    // 跳过高地址的特殊页
+    if (va >= TRAPFRAME) break;
+
+    pte_t *ppte = walk(p->pagetable, va, 0);
+    if (ppte == 0) continue;                 // 父表没这级页表
+    if ((*ppte & PTE_V) == 0) continue;      // 无效
+    if ((*ppte & PTE_U) == 0) continue;      // 不是用户页(比如内核/特殊页)
+
+    uint64 pa   = PTE2PA(*ppte);
+    uint flags  = PTE_FLAGS(*ppte) & (PTE_R | PTE_W | PTE_X | PTE_U);
+
+    // 子表已存在？那就不要再 map，避免 remap
+    pte_t *cpte = walk(np->pagetable, va, 0);
+    if (cpte && (*cpte & PTE_V)) {
+      continue; // 正常情况下不会发生，但保守处理
+    }
+
+    if (mappages(np->pagetable, va, PGSIZE, pa, flags) != 0) {
+      freeproc(np);
       release(&np->lock);
       return -1;
     }
   }
-  np->sz = p->sz;   // 共享同一“数据/堆”上限（注意：我们马上会只在子线程页表里再长出栈）
+  np->sz = p->sz;
 
   // 3) 独立的用户栈（仅映射在子线程的页表中）
   //    简化方案：在 np 的地址空间末尾增加 1 页作为栈（里程碑2允许不把这页同步回其它线程）
-  uint64 userstart = PGROUNDUP(np->sz); 
-  uint64 newsz = userstart + PGSIZE;              // 1 页栈（可改成 2 页并做 guard）
-  if(uvmalloc(np->pagetable, userstart, newsz,PTE_R | PTE_W | PTE_U) == 0){
+
+  // 把这段 [base, top) 的映射广播到组内所有线程（包括父线程本身和新线程np）
+  int slot = np->pid;
+  uint64 guard = TRAPFRAME - (2ULL + 2ULL * slot) * PGSIZE;
+  uint64 base  = guard + PGSIZE;
+  uint64 top   = base  + PGSIZE;
+
+  if (uvmalloc(np->pagetable, base, top, PTE_W) == 0) {
     freeproc(np);
     release(&np->lock);
     return -1;
   }
-  np->start = userstart;          // 记录该线程用户栈的起始地址（底部）
-  np->size  = PGSIZE;        // 栈大小
-  uint64 sp = userstart + PGSIZE; // 栈顶（向下生长）
 
-  // 4) 拷贝父线程的 trapframe 基线，然后设置入口 PC / SP / a0
-  //trapframe 是一个内核用来保存用户态 CPU 寄存器状态的结构体，当用户进程发生中断、陷入（trap）到内核时，内核会把所有重要的寄存器值（包括 PC、SP、通用寄存器等）存到这个结构体中。
+  np->start = base;
+  np->size  = PGSIZE;
+  uint64 sp = top;
+
+  // 入口寄存器（只做一次）
   *(np->trapframe) = *(p->trapframe);
-  np->trapframe->epc = (uint64)start_fn;   // 从用户给定的函数开始执行
-  np->trapframe->sp  = sp;                 // 新栈顶
-  np->trapframe->a0  = (uint64)arg;        // 第一个参数传给 start(void*)
+  np->trapframe->epc = (uint64)start_fn;
+  np->trapframe->sp  = sp;
+  np->trapframe->a0  = (uint64)arg;
+
+  // 安全检查
+  if (walkaddr(np->pagetable, sp - 16) == 0)
+    panic("thread_create: stack not mapped");
 
   // 5) 共享打开文件（与 fork 相同地 filedup），cwd 也共享
   for(i = 0; i < NOFILE; i++){
@@ -234,6 +270,12 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  //线程部分初始化
+  p->is_thread = 0;   
+  p->father    = 0;
+  p->tid       = 0;   
+  p->start     = 0;
+  p->size      = 0;
   return p;
 }
 
@@ -257,6 +299,13 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  //线程部分清理
+  p->is_thread = 0;
+  p->father    = 0;
+  p->tid       = 0;
+  p->start     = 0;
+  p->size      = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -344,23 +393,68 @@ userinit(void)
 
 // Grow or shrink user memory by n bytes.
 // Return 0 on success, -1 on failure.
-int
-growproc(int n)
-{
-  uint64 sz;
+int growproc(int n) {
   struct proc *p = myproc();
+  struct proc *leader = p->is_thread ? p->father : p;
 
-  sz = p->sz;
-  if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
-      return -1;
+  uint64 oldsz = leader->sz;
+  uint64 newsz = oldsz;
+
+  if (n > 0) {
+    newsz = uvmalloc(leader->pagetable, oldsz, oldsz + n, PTE_W);
+    if (newsz == 0) return -1;
+
+    // 广播新映射（跳过已存在映射，避免 remap）
+    for (uint64 va = PGROUNDUP(oldsz); va < newsz; va += PGSIZE) {
+      if (va >= TRAPFRAME) break; // 绝不碰特殊页
+      uint64 pa = walkaddr(leader->pagetable, va);
+
+      for (struct proc *q = proc; q < &proc[NPROC]; q++) {
+        // 同组，且有页表
+        if (!(q && (q == leader || (q->is_thread && q->father == leader)))) continue;
+        if (q->pagetable == 0) continue;
+        if (q->pagetable == leader->pagetable) continue; // 组长本身已映射
+
+        pte_t *qpte = walk(q->pagetable, va, 0);
+        if (qpte && (*qpte & PTE_V)) {
+          // 已经有映射就跳过（防止 mappages: remap）
+          continue;
+        }
+        // 与 uvmalloc 一致的用户权限；是否加 X 依你的策略，通常数据页不加 X
+        if (mappages(q->pagetable, va, PGSIZE, pa, PTE_U | PTE_R | PTE_W) != 0) {
+          // 保守做法：这里不要 panic；简单忽略或记录错误都行
+        }
+      }
     }
-  } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+
+    leader->sz = newsz;
+    for (struct proc *q = proc; q < &proc[NPROC]; q++)
+      if (q && (q == leader || (q->is_thread && q->father == leader)))
+        q->sz = leader->sz;
+
+  } else if (n < 0) {
+    newsz = uvmdealloc(leader->pagetable, oldsz, oldsz + n);
+
+    for (uint64 va = PGROUNDUP(newsz); va < PGROUNDUP(oldsz); va += PGSIZE) {
+      if (va >= TRAPFRAME) break;
+      for (struct proc *q = proc; q < &proc[NPROC]; q++) {
+        if (!(q && (q == leader || (q->is_thread && q->father == leader)))) continue;
+        if (q->pagetable == 0) continue;
+        if (q->pagetable == leader->pagetable) continue;
+        // 只撤销映射，不释放物理页（组长已在 uvmdealloc 里处理）
+        uvmunmap(q->pagetable, va, 1, 0);
+      }
+    }
+
+    leader->sz = newsz;
+    for (struct proc *q = proc; q < &proc[NPROC]; q++)
+      if (q && (q == leader || (q->is_thread && q->father == leader)))
+        q->sz = leader->sz;
   }
-  p->sz = sz;
+
   return 0;
 }
+
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.

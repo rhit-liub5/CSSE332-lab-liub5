@@ -18,4 +18,3 @@ int   ct_join(tid_t tid);
 void  ct_exit(void);
 
 tid_t ct_get_tid(void);
-
