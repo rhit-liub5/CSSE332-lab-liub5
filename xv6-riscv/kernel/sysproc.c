@@ -100,11 +100,11 @@ uint64 sys_spoon(void)
 }
 
 uint64 sys_thread_create(void) {
-  uint64 fn, arg;
+  uint64 fn, arg, ret;
   argaddr(0, &fn);   
   argaddr(1, &arg);
-  int ret = thread_create((void (*)(void *))fn, (void *)arg);
-  return ret;    
+  argaddr(2, &ret);
+  return thread_create((void (*)(void *))fn, (void *)arg,(void(*)(void))ret);
 }
 
 uint64 sys_thread_join(void) {
@@ -112,5 +112,10 @@ uint64 sys_thread_join(void) {
   argint(0, &tid);
   int ret = thread_join(tid);
   return ret;  
+}
+
+uint64 sys_thread_exit(void) {
+  thread_exit();
+  return 0; 
 }
 

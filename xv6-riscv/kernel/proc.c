@@ -43,7 +43,60 @@ static inline int in_same_group(struct proc *q, struct proc *leader) {
   return (q == leader) || (q->is_thread && q->father == leader);
 }
 
-uint64 thread_create(void (*start_fn)(void *), void *arg)
+static void
+freeproc_thread(struct proc *p)
+{
+    // 1) 保险起见：若私有栈还在，这里释放一次（有则解、无则跳过）
+  if (p->start && p->size) {
+    pte_t *pte = walk(p->pagetable, p->start, 0);
+    if (pte && (*pte & PTE_V)) {
+      uvmunmap(p->pagetable, p->start, 1, 1); // do_free=1：这页只属于该线程
+    }
+    p->start = 0;
+    p->size  = 0;
+  }
+
+  // 2) 对 [0, p->sz) 仅撤映射，不释放物理页（共享）
+  uint64 va_end = PGROUNDUP(p->sz);
+  for (uint64 va = 0; va < va_end; va += PGSIZE) {
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte && (*pte & PTE_V)) {
+      uvmunmap(p->pagetable, va, 1, 0);      // do_free=0，避免 double free
+    }
+  }
+
+  // 3) 撤掉高地址保留映射（若存在），同样不 free 物理页
+  pte_t *t;
+  t = walk(p->pagetable, TRAMPOLINE, 0);
+  if (t && (*t & PTE_V)) uvmunmap(p->pagetable, TRAMPOLINE, 1, 0);
+  t = walk(p->pagetable, TRAPFRAME, 0);
+  if (t && (*t & PTE_V)) uvmunmap(p->pagetable, TRAPFRAME, 1, 0);
+
+  // 4) 释放页表结构本身（不涉及物理数据页）
+  uvmfree(p->pagetable, 0);   // or freewalk(p->pagetable);
+  p->pagetable = 0;
+  p->sz = 0;
+
+  // 5) 释放 trapframe（trapframe 是该线程私有的一页）
+  if (p->trapframe) {
+    kfree((void*)p->trapframe);
+    p->trapframe = 0;
+  }
+
+  // 6) 清标记，回到 UNUSED
+  p->pid = 0;
+  p->tid = 0;
+  p->is_thread = 0;
+  p->father = 0;
+  p->parent = 0;
+  p->name[0] = 0;
+  p->chan = 0;
+  p->killed = 0;
+  p->xstate = 0;
+  p->state = UNUSED;
+}
+
+uint64 thread_create(void (*start_fn)(void *), void *arg, void (*retfn)(void))
 {
  int i;
   struct proc *np;
@@ -58,33 +111,20 @@ uint64 thread_create(void (*start_fn)(void *), void *arg)
 
   // 2) 共享用户地址空间：把父方 [0, p->sz) 的用户页，按相同虚拟地址映射到子线程的页表
   //    这里我们不复制物理页，只是把相同的物理页再次映射到 np->pagetable，
-  uint64 psz = PGROUNDUP(p->sz);
+  uint64 psz = PGROUNDUP(leader->sz);
   for (uint64 va = 0; va < psz; va += PGSIZE) {
-    // 跳过高地址的特殊页
     if (va >= TRAPFRAME) break;
-
-    pte_t *ppte = walk(p->pagetable, va, 0);
-    if (ppte == 0) continue;                 // 父表没这级页表
-    if ((*ppte & PTE_V) == 0) continue;      // 无效
-    if ((*ppte & PTE_U) == 0) continue;      // 不是用户页(比如内核/特殊页)
-
-    uint64 pa   = PTE2PA(*ppte);
-    uint flags  = PTE_FLAGS(*ppte) & (PTE_R | PTE_W | PTE_X | PTE_U);
-
-    // 子表已存在？那就不要再 map，避免 remap
+    pte_t *ppte = walk(leader->pagetable, va, 0);
+    if (!ppte || !(*ppte & PTE_V) || !(*ppte & PTE_U)) continue;
+    uint64 pa  = PTE2PA(*ppte);
+    uint flags = PTE_FLAGS(*ppte) & (PTE_R | PTE_W | PTE_X | PTE_U);
     pte_t *cpte = walk(np->pagetable, va, 0);
-    if (cpte && (*cpte & PTE_V)) {
-      continue; // 正常情况下不会发生，但保守处理
-    }
-
-    if (mappages(np->pagetable, va, PGSIZE, pa, flags) != 0) {
-      freeproc(np);
-      release(&np->lock);
-      return -1;
-    }
+    if (cpte && (*cpte & PTE_V)) continue;
+    if (mappages(np->pagetable, va, PGSIZE, pa, flags) != 0) { freeproc(np); release(&np->lock); return -1; }
   }
-  np->sz = p->sz;
+  np->sz = leader->sz;
 
+  
   // 3) 独立的用户栈（仅映射在子线程的页表中）
   //    简化方案：在 np 的地址空间末尾增加 1 页作为栈（里程碑2允许不把这页同步回其它线程）
 
@@ -94,21 +134,29 @@ uint64 thread_create(void (*start_fn)(void *), void *arg)
   uint64 base  = guard + PGSIZE;
   uint64 top   = base  + PGSIZE;
 
-  if (uvmalloc(np->pagetable, base, top, PTE_W) == 0) {
+  if (uvmalloc(np->pagetable, base, top, PTE_U|PTE_R|PTE_W) == 0) {
     freeproc(np);
     release(&np->lock);
     return -1;
+  }else{
+    printf("we use uvmalloc good");
   }
-
+  
   np->start = base;
   np->size  = PGSIZE;
-  uint64 sp = top;
+  uint64 sp = top -1;
+
+  pte_t *pte = walk(np->pagetable, np->start, 0);
+  printf("thread_create: start:%p pa:%p\n", np->start,pte);
+
+  // uvmunmap(np->pagetable, np->start, 1, 1);
 
   // 入口寄存器（只做一次）
   *(np->trapframe) = *(p->trapframe);
   np->trapframe->epc = (uint64)start_fn;
   np->trapframe->sp  = sp;
   np->trapframe->a0  = (uint64)arg;
+  np->trapframe->ra  = (uint64)retfn;
 
   // 安全检查
   if (walkaddr(np->pagetable, sp - 16) == 0)
@@ -144,9 +192,120 @@ uint64 thread_create(void (*start_fn)(void *), void *arg)
   return tid;
 }
 
-uint64 thread_join(int tid) {
-  // 暂时不实现
-  return 0;
+uint64 thread_join(int tid)
+{
+  struct proc *self   = myproc();
+  struct proc *leader = self->is_thread ? self->father : self;
+
+  acquire(&wait_lock);
+  for (;;) {
+    int found = 0;
+    struct proc *target = 0;
+
+    for (struct proc *q = proc; q < &proc[NPROC]; q++) {   //遍历所有进程
+      if (q->state == UNUSED) continue;
+      // 只允许 join 同一线程组内的线程
+      if (q->is_thread && q->father == leader && q->tid == tid) {  //是线程，同一个组，并且tid相同
+        found = 1;
+        target = q;
+        printf("found the target thread %d\n", q->tid);
+
+        acquire(&q->lock);
+        if (q->state == ZOMBIE) {
+          int ret = q->tid;
+          freeproc_thread(q);         // 彻底回收：释放 trapframe、页表（不含共享页）、清字段
+          release(&q->lock);
+          release(&wait_lock);
+          return ret;
+        }
+        release(&q->lock);
+        printf("target thread %d not exited yet\n", q->tid);
+        break;
+      }
+    }
+
+    if (!found) {
+      // 不存在这样的线程（或 tid 非本组）→ 失败
+      release(&wait_lock);
+      return -1;
+    }
+
+    // 目标还没退出，睡在它的地址上；thread_exit() 会 wakeup(target)
+    sleep(target, &wait_lock);
+  }
+}
+
+void thread_exit(void)
+{
+  struct proc *p = myproc();
+
+  // 如果是leader，直接调用进程退出
+  if (!p->is_thread) {
+    exit(0);
+    return; // not reached
+  }
+
+
+
+  // 1) 关闭文件（你的实现里每个线程 filedup 了一份，需要逐个 close 降引用）
+  //在进程中有
+  for (int fd = 0; fd < NOFILE; fd++) {
+    if (p->ofile[fd]) {
+      struct file *f = p->ofile[fd];
+      fileclose(f);
+      p->ofile[fd] = 0;
+    }
+  }
+
+  // 2) 释放 cwd 的引用（thread_create 里 idup 过）
+  //进程中有
+  begin_op();
+  if (p->cwd) {
+    iput(p->cwd);
+    p->cwd = 0;
+  }
+  end_op();
+
+  //测试
+
+
+  // pte_t *pte = walk(p->pagetable, p->start, 0);
+  // if(pte == 0 || !(*pte & PTE_V)){
+  //   printf("stack PTE missing: va=%p start=%p size=%p\n",
+  //         p->start, p->start, p->size);
+  // }
+  
+  // 3) 撤销“该线程私有的用户栈”映射（仅该线程页表；这页只被这个线程映射，可连同物理页一起释放）
+
+  if (p->start && p->size) {
+    pte_t *pte = walk(p->pagetable, p->start, 0);
+    if (pte && (*pte & PTE_V)) {
+      // 真的有映射才撤销，连同物理页一起释放
+      uvmunmap(p->pagetable, p->start, 1, 1);
+      printf("uvmunmap success\n");
+    } else {
+      // 没映射就不做 uvmunmap，避免 panic
+      // 可选：printf 调试
+      printf("stack PTE missing: va=%p\n", (void*)p->start);
+    }
+    p->start = 0;
+    p->size  = 0;
+  }
+
+  // 4) 置 ZOMBIE 并唤醒 thread_join() 等待者
+  acquire(&wait_lock);
+  acquire(&p->lock); //在调用sched的时候必须持有p->lock，但是如果程序不回来我们也没有必要释放了
+  p->xstate = 0;
+  p->state  = ZOMBIE;
+
+  // 唤醒在 sleep(target_proc, &wait_lock) 上等待的 joiner
+  wakeup(p);
+  printf("thread_exit: thread %d exit\n", p->tid);
+
+  // 跟随 xv6 的模式：持有 p->lock、释放 wait_lock 后进入调度，不再返回
+  release(&wait_lock);
+  sched();
+  panic("thread_exit: zombie"); // 不应到达
 }
 
 

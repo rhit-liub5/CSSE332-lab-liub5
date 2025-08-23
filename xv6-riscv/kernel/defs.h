@@ -108,8 +108,9 @@ int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
 
 uint64          spoon(void*);
-uint64          thread_create(void (*start_routine)(void*), void *arg);
+uint64          thread_create(void (*start_routine)(void*), void *arg, void (*retfn)(void));
 uint64          thread_join(int tid);
+void            thread_exit(void);
 
 
 

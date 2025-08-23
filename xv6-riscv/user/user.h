@@ -3,9 +3,12 @@ struct stat;
 
 // system calls
 int fork(void);
+
 int spoon(void*);
-int thread_create(void (*start_routine)(void*), void *arg);
+int thread_create(void (*start_fn)(void *), void *arg, void (*retfn)(void));
 int thread_join(int tid);
+int thread_exit(void); 
+
 int exit(int) __attribute__((noreturn));
 int wait(int*);
 int pipe(int*);
