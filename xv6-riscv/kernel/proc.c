@@ -46,15 +46,6 @@ static inline int in_same_group(struct proc *q, struct proc *leader) {
 static void
 freeproc_thread(struct proc *p)
 {
-    // 1) 保险起见：若私有栈还在，这里释放一次（有则解、无则跳过）
-  if (p->start && p->size) {
-    pte_t *pte = walk(p->pagetable, p->start, 0);
-    if (pte && (*pte & PTE_V)) {
-      uvmunmap(p->pagetable, p->start, 1, 1); // do_free=1：这页只属于该线程
-    }
-    p->start = 0;
-    p->size  = 0;
-  }
 
   // 2) 对 [0, p->sz) 仅撤映射，不释放物理页（共享）
   uint64 va_end = PGROUNDUP(p->sz);
@@ -68,9 +59,13 @@ freeproc_thread(struct proc *p)
   // 3) 撤掉高地址保留映射（若存在），同样不 free 物理页
   pte_t *t;
   t = walk(p->pagetable, TRAMPOLINE, 0);
-  if (t && (*t & PTE_V)) uvmunmap(p->pagetable, TRAMPOLINE, 1, 0);
+  if (t && (*t & PTE_V)){
+    uvmunmap(p->pagetable, TRAMPOLINE, 1, 0);
+  } 
   t = walk(p->pagetable, TRAPFRAME, 0);
-  if (t && (*t & PTE_V)) uvmunmap(p->pagetable, TRAPFRAME, 1, 0);
+  if (t && (*t & PTE_V)){
+    uvmunmap(p->pagetable, TRAPFRAME, 1, 0);
+  } 
 
   // 4) 释放页表结构本身（不涉及物理数据页）
   uvmfree(p->pagetable, 0);   // or freewalk(p->pagetable);
@@ -106,6 +101,7 @@ uint64 thread_create(void (*start_fn)(void *), void *arg, void (*retfn)(void))
   if((np = allocproc()) == 0){
     return -1;
   }
+  
   struct proc *leader = group_leader(p);
   np->sz = leader->sz;   // 共享当前地址空间“上界”
 
@@ -113,14 +109,23 @@ uint64 thread_create(void (*start_fn)(void *), void *arg, void (*retfn)(void))
   //    这里我们不复制物理页，只是把相同的物理页再次映射到 np->pagetable，
   uint64 psz = PGROUNDUP(leader->sz);
   for (uint64 va = 0; va < psz; va += PGSIZE) {
-    if (va >= TRAPFRAME) break;
+    // 遇到高地址保留映射就停止（trampoline、trapframe）
+    if (va >= TRAPFRAME){
+      break;
+    } 
+    //只复制真正存在且是用户可访问的映射
     pte_t *ppte = walk(leader->pagetable, va, 0);
-    if (!ppte || !(*ppte & PTE_V) || !(*ppte & PTE_U)) continue;
+    if (!ppte || !(*ppte & PTE_V) || !(*ppte & PTE_U)){
+      continue;
+    } 
+    //取出这页在物理内存中的地址
     uint64 pa  = PTE2PA(*ppte);
     uint flags = PTE_FLAGS(*ppte) & (PTE_R | PTE_W | PTE_X | PTE_U);
-    pte_t *cpte = walk(np->pagetable, va, 0);
-    if (cpte && (*cpte & PTE_V)) continue;
-    if (mappages(np->pagetable, va, PGSIZE, pa, flags) != 0) { freeproc(np); release(&np->lock); return -1; }
+
+    //在子线程的页表中映射相同的物理页
+    if (mappages(np->pagetable, va, PGSIZE, pa, flags) != 0) {
+       freeproc(np); release(&np->lock); return -1; 
+      }
   }
   np->sz = leader->sz;
 
@@ -130,37 +135,33 @@ uint64 thread_create(void (*start_fn)(void *), void *arg, void (*retfn)(void))
 
   // 把这段 [base, top) 的映射广播到组内所有线程（包括父线程本身和新线程np）
   int slot = np->pid;
-  uint64 guard = TRAPFRAME - (2ULL + 2ULL * slot) * PGSIZE;
-  uint64 base  = guard + PGSIZE;
+  uint64 safpot = TRAPFRAME - (2ULL + 2ULL * slot) * PGSIZE;
+  uint64 base  = safpot + PGSIZE;
   uint64 top   = base  + PGSIZE;
+
 
   if (uvmalloc(np->pagetable, base, top, PTE_U|PTE_R|PTE_W) == 0) {
     freeproc(np);
     release(&np->lock);
     return -1;
-  }else{
-    printf("we use uvmalloc good");
   }
   
   np->start = base;
   np->size  = PGSIZE;
   uint64 sp = top -1;
 
-  pte_t *pte = walk(np->pagetable, np->start, 0);
-  printf("thread_create: start:%p pa:%p\n", np->start,pte);
-
-  // uvmunmap(np->pagetable, np->start, 1, 1);
-
   // 入口寄存器（只做一次）
   *(np->trapframe) = *(p->trapframe);
   np->trapframe->epc = (uint64)start_fn;
   np->trapframe->sp  = sp;
   np->trapframe->a0  = (uint64)arg;
-  np->trapframe->ra  = (uint64)retfn;
+  np->trapframe->ra  = (uint64)retfn; // 用户态函数返回地址（retfn）也就是exit
 
   // 安全检查
-  if (walkaddr(np->pagetable, sp - 16) == 0)
+  if (walkaddr(np->pagetable, sp - 16) == 0){
     panic("thread_create: stack not mapped");
+  }
+    
 
   // 5) 共享打开文件（与 fork 相同地 filedup），cwd 也共享
   for(i = 0; i < NOFILE; i++){
@@ -174,7 +175,7 @@ uint64 thread_create(void (*start_fn)(void *), void *arg, void (*retfn)(void))
   // 6) 线程组标记与亲缘关系
   np->is_thread = 1;
   np->father    = (p->is_thread ? p->father : p); // 组长（拥有地址空间的那个）
-  np->tid       = np->pid;                        // 里程碑2：直接用 pid 当 tid
+  np->tid       = np->pid;                       
 
   int tid = np->tid;
 
@@ -208,7 +209,6 @@ uint64 thread_join(int tid)
       if (q->is_thread && q->father == leader && q->tid == tid) {  //是线程，同一个组，并且tid相同
         found = 1;
         target = q;
-        printf("found the target thread %d\n", q->tid);
 
         acquire(&q->lock);
         if (q->state == ZOMBIE) {
@@ -219,7 +219,6 @@ uint64 thread_join(int tid)
           return ret;
         }
         release(&q->lock);
-        printf("target thread %d not exited yet\n", q->tid);
         break;
       }
     }
@@ -266,15 +265,6 @@ void thread_exit(void)
   }
   end_op();
 
-  //测试
-
-
-  // pte_t *pte = walk(p->pagetable, p->start, 0);
-  // if(pte == 0 || !(*pte & PTE_V)){
-  //   printf("stack PTE missing: va=%p start=%p size=%p\n",
-  //         p->start, p->start, p->size);
-  // }
-  
   // 3) 撤销“该线程私有的用户栈”映射（仅该线程页表；这页只被这个线程映射，可连同物理页一起释放）
 
   if (p->start && p->size) {
@@ -282,7 +272,6 @@ void thread_exit(void)
     if (pte && (*pte & PTE_V)) {
       // 真的有映射才撤销，连同物理页一起释放
       uvmunmap(p->pagetable, p->start, 1, 1);
-      printf("uvmunmap success\n");
     } else {
       // 没映射就不做 uvmunmap，避免 panic
       // 可选：printf 调试
@@ -300,7 +289,6 @@ void thread_exit(void)
 
   // 唤醒在 sleep(target_proc, &wait_lock) 上等待的 joiner
   wakeup(p);
-  printf("thread_exit: thread %d exit\n", p->tid);
 
   // 跟随 xv6 的模式：持有 p->lock、释放 wait_lock 后进入调度，不再返回
   release(&wait_lock);
@@ -565,14 +553,22 @@ int growproc(int n) {
 
     // 广播新映射（跳过已存在映射，避免 remap）
     for (uint64 va = PGROUNDUP(oldsz); va < newsz; va += PGSIZE) {
-      if (va >= TRAPFRAME) break; // 绝不碰特殊页
+      if (va >= TRAPFRAME){
+        break;
+      }  // 绝不碰特殊页
       uint64 pa = walkaddr(leader->pagetable, va);
 
       for (struct proc *q = proc; q < &proc[NPROC]; q++) {
         // 同组，且有页表
-        if (!(q && (q == leader || (q->is_thread && q->father == leader)))) continue;
-        if (q->pagetable == 0) continue;
-        if (q->pagetable == leader->pagetable) continue; // 组长本身已映射
+        if (!(q && (q == leader || (q->is_thread && q->father == leader)))){
+          continue;
+        } 
+        if (q->pagetable == 0){
+          continue;
+        } 
+        if (q->pagetable == leader->pagetable){
+          continue; // 组长本身已映射
+        } 
 
         pte_t *qpte = walk(q->pagetable, va, 0);
         if (qpte && (*qpte & PTE_V)) {

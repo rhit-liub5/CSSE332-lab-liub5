@@ -28,4 +28,6 @@ void  ct_exit(void){
     for(;;) { }
 };
 
-tid_t ct_get_tid(void);
+tid_t ct_get_tid(void){
+    return getpid();
+};
